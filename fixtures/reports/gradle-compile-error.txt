@@ -1,0 +1,24 @@
+> Task :app:compileJava FAILED
+/work/acme/app/src/main/java/com/acme/Order.java:12: error: cannot find symbol
+        return priceCalculator.total(lines);
+               ^
+  symbol:   variable priceCalculator
+  location: class com.acme.Order
+/work/acme/app/src/main/java/com/acme/Order.java:19: error: incompatible types: int cannot be converted to Money
+        Money total = 0;
+                      ^
+2 errors
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3s
+1 actionable task: 1 executed

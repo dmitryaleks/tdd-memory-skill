@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="com.acme.PricingTest" tests="2" skipped="0" failures="0" errors="1" time="0.03">
+    <testcase name="explodes()" classname="com.acme.PricingTest" time="0.01">
+      <error message="Cannot invoke &quot;com.acme.Price.value()&quot; because &quot;price&quot; is null" type="java.lang.NullPointerException">java.lang.NullPointerException: Cannot invoke "com.acme.Price.value()" because "price" is null
+	at com.acme.Pricing.apply(Pricing.java:18)
+</error>
+    </testcase>
+    <testcase name="roundsHalfUp()" classname="com.acme.PricingTest" time="0.02"/>
+  </testsuite>
+  <testsuite name="com.acme.TaxTest" tests="1" skipped="0" failures="0" errors="0" time="0.01">
+    <testcase name="appliesVat()" classname="com.acme.TaxTest" time="0.01"/>
+  </testsuite>
+</testsuites>

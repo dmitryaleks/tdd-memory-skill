@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+*.iml
+
+# Runtime state of the tracker, when this repo is itself a target
+.claude/tdd/state/
+.claude/tdd/logs/
+.claude/tdd/snapshots/
+.claude/tdd/archive/
+.claude/tdd/STATUS.md

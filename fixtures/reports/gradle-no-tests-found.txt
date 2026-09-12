@@ -1,0 +1,15 @@
+> Task :app:compileJava UP-TO-DATE
+> Task :app:compileTestJava UP-TO-DATE
+> Task :app:test FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:test'.
+> No tests found for given includes: [com.acme.NoSuchTest](--tests filter)
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+
+BUILD FAILED in 2s
+4 actionable tasks: 1 executed, 3 up-to-date

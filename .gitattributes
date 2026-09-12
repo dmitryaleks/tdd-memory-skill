@@ -1,0 +1,10 @@
+# Normalise to LF in the repository.
+* text=auto
+
+# Shell scripts must keep LF wherever they are checked out: CRLF makes a
+# POSIX shell fail with "bad interpreter".
+*.sh text eol=lf
+
+# Windows scripts want CRLF.
+*.bat text eol=crlf
+*.ps1 text eol=crlf

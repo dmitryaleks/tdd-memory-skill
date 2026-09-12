@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.acme.OrderTest" tests="3" skipped="1" failures="1" errors="0" time="0.052">
+  <properties/>
+  <testcase name="appliesDiscount()" classname="com.acme.OrderTest" time="0.011">
+    <failure message="expected: &lt;10&gt; but was: &lt;12&gt;" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: expected: &lt;10&gt; but was: &lt;12&gt;
+	at com.acme.OrderTest.appliesDiscount(OrderTest.java:41)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:568)
+</failure>
+  </testcase>
+  <testcase name="totalsLines()" classname="com.acme.OrderTest" time="0.004"/>
+  <testcase name="ignoredForNow()" classname="com.acme.OrderTest" time="0.0">
+    <skipped/>
+  </testcase>
+  <system-out><![CDATA[some chatty logging nobody needs in the context window]]></system-out>
+</testsuite>

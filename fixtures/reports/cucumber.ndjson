@@ -1,0 +1,21 @@
+{"meta":{"protocolVersion":"24.0.0","implementation":{"name":"cucumber-jvm","version":"7.15.0"}}}
+{"source":{"uri":"src/test/resources/features/order.feature","mediaType":"text/x.cucumber.gherkin+plain"}}
+{"gherkinDocument":{"uri":"src/test/resources/features/order.feature","feature":{"location":{"line":1},"tags":[{"name":"@pricing"}],"name":"Orders","children":[{"scenario":{"id":"sc-1","location":{"line":14},"name":"Discount applied to large orders","tags":[]}},{"scenario":{"id":"sc-2","location":{"line":20},"name":"No discount for small orders","tags":[]}},{"scenario":{"id":"sc-3","location":{"line":26},"name":"Tiered discount","examples":[{"location":{"line":31},"tableBody":[{"id":"row-1","location":{"line":33}},{"id":"row-2","location":{"line":34}}]}]}}]}}}
+{"pickle":{"id":"pk-1","uri":"src/test/resources/features/order.feature","name":"Discount applied to large orders","astNodeIds":["sc-1"]}}
+{"pickle":{"id":"pk-2","uri":"src/test/resources/features/order.feature","name":"No discount for small orders","astNodeIds":["sc-2"]}}
+{"pickle":{"id":"pk-3","uri":"src/test/resources/features/order.feature","name":"Tiered discount","astNodeIds":["sc-3","row-1"]}}
+{"testCase":{"id":"tc-1","pickleId":"pk-1"}}
+{"testCase":{"id":"tc-2","pickleId":"pk-2"}}
+{"testCase":{"id":"tc-3","pickleId":"pk-3"}}
+{"testCaseStarted":{"id":"ts-1","testCaseId":"tc-1","timestamp":{"seconds":1757000000}}}
+{"testStepFinished":{"testCaseStartedId":"ts-1","testStepResult":{"status":"PASSED","duration":{"seconds":0,"nanos":1000}}}}
+{"testStepFinished":{"testCaseStartedId":"ts-1","testStepResult":{"status":"PASSED","duration":{"seconds":0,"nanos":2000}}}}
+{"testCaseFinished":{"testCaseStartedId":"ts-1"}}
+{"testCaseStarted":{"id":"ts-2","testCaseId":"tc-2","timestamp":{"seconds":1757000001}}}
+{"testStepFinished":{"testCaseStartedId":"ts-2","testStepResult":{"status":"PASSED","duration":{"seconds":0,"nanos":1000}}}}
+{"testStepFinished":{"testCaseStartedId":"ts-2","testStepResult":{"status":"FAILED","message":"expected 10 but was 12","duration":{"seconds":0,"nanos":3000}}}}
+{"testCaseFinished":{"testCaseStartedId":"ts-2"}}
+{"testCaseStarted":{"id":"ts-3","testCaseId":"tc-3","timestamp":{"seconds":1757000002}}}
+{"testStepFinished":{"testCaseStartedId":"ts-3","testStepResult":{"status":"PASSED","duration":{"seconds":0,"nanos":1000}}}}
+{"testCaseFinished":{"testCaseStartedId":"ts-3"}}
+{"testRunFinished":{"success":false}}
