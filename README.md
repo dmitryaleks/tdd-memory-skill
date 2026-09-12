@@ -198,3 +198,107 @@ python fixtures/e2e.py --keep
 driving real subprocesses. Gradle is replaced by a stand-in that writes genuine JUnit XML and
 Cucumber messages — a real Gradle run would download dependencies, and this project does not use the
 network.
+
+---
+
+## Choosing the work: the file, and the tests
+
+Nominating the file is a human decision. Picking the tests is a three-way split, and the split is
+deliberate.
+
+### Nominating the file
+
+Either say it in plain language — "refactor `Order.java`, I want the pricing rule extracted", which
+is what the skill's description triggers on — or use the slash command:
+
+```
+/tdd-target app/src/main/java/com/acme/Order.java extract PriceCalculator
+```
+
+Both end in the same call:
+
+```bash
+python .claude/tdd/tddstate.py init --target app/src/main/java/com/acme/Order.java \
+    --goal "extract PriceCalculator"
+```
+
+`init` resolves the fully-qualified name from the file's `package` declaration, and the Gradle
+subproject from the nearest ancestor `build.gradle` (`:app`, or `:services:billing`). It refuses to
+replace a target that is still active unless given `--force`; finishing the current one with `done`
+is almost always what was meant.
+
+The `--goal` is free text and worth writing properly: it appears in every future session's resume
+brief, so it is the one piece of intent that survives a reconnect.
+
+### Who picks the tests
+
+| | Role |
+|---|---|
+| **The tracker** | *Proposes.* Deterministic, ranked candidates, each with the reason it was found. Never decides. |
+| **The model** | *Confirms and prunes.* Runs `select`, which is what makes the choice stick. |
+| **You** | *Override at any point.* Name ids directly; discovery has no veto. |
+
+The model runs `select`, but it chooses from a ranked list it did not invent. That is the point:
+letting an unreliable model free-associate about which tests are relevant is what produced a
+different answer every session.
+
+### How the ranking works
+
+**Unit tests**, from `Order.java` ⇒ `com.acme.Order`:
+
+```
+FOUND 3 unit candidate(s)
+  [3] com.acme.OrderTest              name match: Order -> OrderTest
+  [2] com.acme.checkout.CheckoutTest  imports com.acme.Order
+  [1] com.acme.TaxTest                same package com.acme
+```
+
+Scores 2 and 1 additionally require a JUnit marker (`@Test` and friends). Without that check a
+fixture helper such as `TestData.java` — which names the target constantly but contains no test —
+outranks real tests. Step-definition classes and the Cucumber runner are excluded outright: they are
+glue, and they belong to the scenario side.
+
+**Scenario tests** need two hops, because feature files never name a Java class:
+
+1. find the step-definition classes that import or reference `Order`;
+2. extract their `@Given` / `@When` / `@Then` expressions and match those against the steps of every
+   `.feature` file, then walk up to the enclosing scenario.
+
+```
+FOUND 3 scenario candidate(s)
+  [3] app/src/test/resources/features/order.feature:14  Discount applied to large orders  @pricing @discount
+      step 'the order total is {int}' is defined in PricingSteps.java, which references Order
+NOTE  cucumber runner class detected: com.acme.RunCucumberTest
+```
+
+Matching is regex-first with a literal-fragment fallback. A `Scenario Outline` step reads `Given the
+order total is <total>`, which no parameter regex matches, so strict matching would silently drop
+every outline in the codebase.
+
+The model then confirms:
+
+```bash
+tdd select unit com.acme.OrderTest com.acme.checkout.CheckoutTest
+tdd select scenario app/src/test/resources/features/order.feature:14
+```
+
+### Four things worth knowing
+
+**Selection is sticky.** It lives in the state file, so a restart never re-derives it. That is the
+largest single saving on a reconnect, and — more importantly — it guarantees the *same* tests are
+used before and after an interruption.
+
+**Discovery ranks, it never vetoes.** An id it did not find is still accepted, and flagged. If you
+know a test matters, say so.
+
+**Re-selecting clears that gate's baseline and last result.** Both described the previous set of
+tests, and grading a new selection against the old reference produces quietly wrong verdicts. Get
+the selection right before baselining, or expect to re-baseline.
+
+**`select scenario --none`** records that a target genuinely has no Cucumber coverage and skips that
+gate entirely — the difference between "verified, nothing to run" and "forgot to check".
+
+On pruning: every selected test runs on *every* verification, so a bloated selection taxes each
+iteration of the loop, while a missed test costs you once, later. Prefer a tight selection and add to
+it when something surprises you. `.claude/skills/tdd-loop/references/discovery.md` covers the
+judgement calls.
