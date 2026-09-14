@@ -98,106 +98,109 @@ For the human: `/tdd-next`, `/tdd-status` and `/tdd-target <file>` are slash com
 
 ---
 
-## What it actually enforces
+## How it works
 
-Four guards live in the program rather than in the prompt, so a model cannot talk its way past them.
+### The loop as a state machine
 
-**Unit before scenario.** `run scenario` is refused while the unit gate is red. A scenario failing
-over a red unit gate tells you nothing — it would fail either way.
+Phases are not decoration: each one has exactly one legitimate next action, which is what lets a
+model with no memory of the last hour still do the right thing.
 
-**Freshness before greenness.** `step done` is refused when a watched file has changed since the run
-that verified it. Each run records the mtime of every watched file as it starts, and a result is
-stale when any of those differs now. This is the single most common way an agentic loop convinces
-itself it has finished.
-
-**Green measured against the baseline.** Tests already failing before you started do not block the
-gate; they are counted, not blamed on you. Regressions — tests that passed at baseline and fail now —
-are listed first in every summary.
-
-**Three identical failures stop the loop.** Each run gets a failure signature. Three in a row with
-the same signature means the approach is wrong, not that it needs another try, so `next` switches to
-`ESCALATE`: revert the increment, or hand back to the human.
-
-### Build output stays out of the context window
-
-The tracker runs Gradle itself. Full output goes to `.claude/tdd/logs/`; the model sees a capped
-summary of about twenty lines. In the end-to-end walk a failing run costs **4 printed lines against
-607 on disk**.
-
-It also separates outcomes Gradle reports identically:
-
-| Outcome | Gradle says | The tracker says |
-|---|---|---|
-| Compile error | `BUILD FAILED` | **BUILD FAILED — the tests never ran.** Fix the error; change nothing else. |
-| Real test failure | `BUILD FAILED` | **tests_failed**, naming the tests |
-| Filter matched nothing | `BUILD FAILED` | **NO RESULTS** — not a pass, and not a broken build either |
-| Task skipped as up-to-date | `BUILD SUCCESSFUL` | **NO RESULTS** — stale reports are never read as green |
-
----
-
-## When a session dies
-
-Nothing to do. Run `next`.
-
-Every change is written to an append-only journal *before* the state file, so the journal is never
-behind. If the state file is lost or truncated:
-
-```bash
-python .claude/tdd/tddstate.py repair
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> INIT
+    INIT --> DISCOVER_UNIT: init
+    DISCOVER_UNIT --> CONFIRM_UNIT: discover unit
+    CONFIRM_UNIT --> BASELINE_UNIT: select unit
+    BASELINE_UNIT --> DISCOVER_SCENARIO: baseline unit
+    DISCOVER_SCENARIO --> CONFIRM_SCENARIO: discover scenario
+    CONFIRM_SCENARIO --> BASELINE_SCENARIO: select scenario
+    CONFIRM_SCENARIO --> READY: select scenario, none apply
+    BASELINE_SCENARIO --> READY: baseline scenario
+    READY --> STEP_OPEN: step start
+    STEP_OPEN --> VERIFY_UNIT: code edited
+    VERIFY_UNIT --> FIX_UNIT: regressions
+    FIX_UNIT --> VERIFY_UNIT: run unit
+    VERIFY_UNIT --> VERIFY_SCENARIO: unit green
+    VERIFY_SCENARIO --> FIX_SCENARIO: regressions
+    FIX_SCENARIO --> VERIFY_SCENARIO: run scenario
+    VERIFY_SCENARIO --> STEP_GREEN: scenario green
+    STEP_GREEN --> STEP_OPEN: step start
+    STEP_GREEN --> INIT: done, target archived
+    STEP_OPEN --> BLOCKED: block
+    BLOCKED --> STEP_OPEN: unblock
 ```
 
-It replays the journal and rebuilds the state exactly — including notes, the open increment and the
-red gate. `references/recovery.md` covers stale locks, timeouts and the rest.
+Three things are worth reading twice. `VERIFY_SCENARIO` is reachable **only** from a green unit gate
+— that is the ordering guard, and it is enforced in code, not by asking nicely. `BLOCKED` is
+reachable from *any* phase, not just `STEP_OPEN` as drawn; only `unblock` leaves it. And `done`
+returns to `INIT` rather than to a terminal state: finishing a target archives it and leaves the loop
+ready for the next file, so this really is a cycle.
 
----
+The phase is stored for humans and for the journal, but it is never the source of truth for what to
+do next. That is recomputed from scratch on every call, so a hand-edited or corrupted phase cannot
+send the loop off the rails.
 
-## Layout
+### What `next` decides
 
-```
-payload/.claude/           what gets copied into your repo
-  tdd/tddstate.py            the tracker: state machine, gradle runner, discovery
-  skills/tdd-loop/           SKILL.md + references loaded on demand
-  commands/                  /tdd-next, /tdd-status, /tdd-target
-  CLAUDE.tdd.md              the block merged into your CLAUDE.md
-install/install.py         installer (.ps1 / .sh are launchers)
-fixtures/                  sample Gradle project, recorded reports, e2e.py
-tests/                     253 tests
-DEVPLAN.md                 the design, and why each decision went the way it did
-```
+`next` is a pure function of state plus a few filesystem facts. Conditions are evaluated **in order**
+and the first match wins, so the outcome is completely deterministic — the same state always yields
+the same instruction.
 
-Inside your repo at runtime:
-
-```
-.claude/tdd/STATUS.md        human-readable mirror
-.claude/tdd/state/           session.json + append-only journal.jsonl  (gitignored)
-.claude/tdd/logs/            full build output                          (gitignored)
-.claude/tdd/snapshots/       per-increment file copies for revert-step  (gitignored)
-.claude/tdd/archive/         finished targets                           (gitignored)
-```
-
----
-
-## Tests
-
-```bash
-cd tests && python -m unittest discover -s . -p "test_*.py"
-```
-
-253 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
-recorded fixtures, discovery against a real sample project, the guards, the installer, and the
-documentation itself — every command, flag and action code the skill mentions is checked against the
-CLI, because a weak model types what the docs tell it to type.
-
-The end-to-end walk is also runnable on its own:
-
-```bash
-python fixtures/e2e.py --keep
+```mermaid
+flowchart TD
+    START(["tdd next"]) --> Q1{"work blocked?"}
+    Q1 -->|yes| A1["UNBLOCK"]
+    Q1 -->|no| Q2{"target, tests and<br/>baselines all recorded?"}
+    Q2 -->|no| A2["the setup step<br/>that is missing"]
+    Q2 -->|yes| Q3{"increment open?"}
+    Q3 -->|no| A3["START_STEP or<br/>NEXT_STEP_OR_DONE"]
+    Q3 -->|yes| Q4{"did the last run<br/>produce a verdict?"}
+    Q4 -->|no| A4["FIX_BUILD<br/>DIAGNOSE_RUN<br/>RERUN_TIMEOUT"]
+    Q4 -->|yes| Q5{"same failure<br/>three times?"}
+    Q5 -->|yes| A5["ESCALATE"]
+    Q5 -->|no| Q6{"anything changed<br/>in this increment yet?"}
+    Q6 -->|no| A6["AWAIT_EDIT"]
+    Q6 -->|yes| Q7{"unit fresh<br/>and green?"}
+    Q7 -->|no| A7["RUN_UNIT or<br/>FIX_UNIT"]
+    Q7 -->|yes| Q8{"scenario fresh<br/>and green?"}
+    Q8 -->|no| A8["RUN_SCENARIO or<br/>FIX_SCENARIO"]
+    Q8 -->|yes| A9["FINISH_STEP"]
 ```
 
-73 checks against a scratch copy of the sample project, installed the way you would install it,
-driving real subprocesses. Gradle is replaced by a stand-in that writes genuine JUnit XML and
-Cucumber messages — a real Gradle run would download dependencies, and this project does not use the
-network.
+The `AWAIT_EDIT` branch exists for a reason that is easy to miss. Baselines are taken *before* an
+increment opens, so the moment you open one, the last run is merely "stale". Without that branch
+`next` would say "run the unit tests", they would pass, the scenarios would pass, and the model would
+close an increment **in which no code was ever written**.
+
+### One increment, end to end
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor M as Model
+    participant T as Tracker
+    participant G as Gradle
+    M->>T: step start extract PriceCalculator
+    T->>T: snapshot the files, record git HEAD
+    M->>M: write the code change
+    M->>T: run unit
+    T->>G: gradlew :app:test --tests com.acme.OrderTest
+    G-->>T: 607 lines of output, plus JUnit XML
+    T-->>M: 4-line summary and a log path
+    M->>T: run scenario
+    T-->>M: REFUSED, the unit gate is red
+    M->>M: fix the named test
+    M->>T: run unit
+    T-->>M: passed
+    M->>T: run scenario
+    T-->>M: passed
+    M->>T: step done
+    T-->>M: increment closed
+```
+
+Note what the model never sees: the 607 lines. And note step 9 — the refusal is not advice, it is a
+non-zero exit code.
 
 ---
 
@@ -260,9 +263,20 @@ glue, and they belong to the scenario side.
 
 **Scenario tests** need two hops, because feature files never name a Java class:
 
-1. find the step-definition classes that import or reference `Order`;
-2. extract their `@Given` / `@When` / `@Then` expressions and match those against the steps of every
-   `.feature` file, then walk up to the enclosing scenario.
+```mermaid
+flowchart LR
+    T["Order.java<br/>the target"]
+    S["PricingSteps.java<br/>step definitions"]
+    E["step expressions<br/>extracted from the annotations"]
+    F["order.feature:14<br/>Discount applied to large orders"]
+    T -->|hop 1: imports or references| S
+    S -->|parse| E
+    E -->|hop 2: match the feature steps| F
+    T -.->|a direct search finds nothing| F
+```
+
+The dotted line is the whole problem: nothing in `order.feature` mentions `Order`. The connection
+only exists through the glue.
 
 ```
 FOUND 3 scenario candidate(s)
@@ -270,6 +284,15 @@ FOUND 3 scenario candidate(s)
       step 'the order total is {int}' is defined in PricingSteps.java, which references Order
 NOTE  cucumber runner class detected: com.acme.RunCucumberTest
 ```
+
+| Score | Unit | Scenario |
+|---|---|---|
+| **3** | name match (`Order` → `OrderTest`) | a step in the scenario is defined in a class that references the target |
+| **2** | imports or references the target, and has real tests | a `Background` step matched, or it shares a file with a scoring scenario |
+| **1** | same package only | shares a tag with a scoring scenario |
+
+A `Background` step scores 2 rather than 3 because it runs for *every* scenario in its file, so it
+implicates all of them — weaker evidence than a scenario's own step.
 
 Matching is regex-first with a literal-fragment fallback. A `Scenario Outline` step reads `Given the
 order total is <total>`, which no parameter regex matches, so strict matching would silently drop
@@ -302,3 +325,180 @@ On pruning: every selected test runs on *every* verification, so a bloated selec
 iteration of the loop, while a missed test costs you once, later. Prefer a tight selection and add to
 it when something surprises you. `.claude/skills/tdd-loop/references/discovery.md` covers the
 judgement calls.
+
+---
+
+## What it actually enforces
+
+Four guards live in the program rather than in the prompt, so a model cannot talk its way past them.
+
+**Unit before scenario.** `run scenario` is refused while the unit gate is red. A scenario failing
+over a red unit gate tells you nothing — it would fail either way.
+
+**Freshness before greenness.** `step done` is refused when a watched file has changed since the run
+that verified it. Each run records the mtime of every watched file as it starts, and a result is
+stale when any of those differs now. This is the single most common way an agentic loop convinces
+itself it has finished.
+
+> Why recorded mtimes rather than comparing timestamps? Because the gap between a run starting and an
+> edit landing can be **26 microseconds** — measured, not guessed — and filesystems differ in mtime
+> resolution. *"Did the edit come before or after the run?"* has no dependable answer at that margin.
+> *"Is this the same file that was tested?"* always does. Both orderings of the naive comparison
+> produced intermittently wrong verdicts before this was changed.
+
+**Green measured against the baseline.** Tests already failing before you started do not block the
+gate; they are counted, not blamed on you. Regressions — tests that passed at baseline and fail now —
+are listed first in every summary.
+
+**Three identical failures stop the loop.** Each run gets a failure signature: a hash over the sorted
+failing test ids paired with the first line of each message. Stack traces wobble between runs; the
+assertion line does not. Three identical signatures in a row means the approach is wrong, not that it
+needs another try, so `next` switches to `ESCALATE`: revert the increment, or hand back to the human.
+
+### Reading a Gradle run correctly
+
+Gradle prints `BUILD FAILED` for a compile error, a real test failure **and** a filter that matched
+nothing. It prints `BUILD SUCCESSFUL` when it skipped the test task as up-to-date and left last
+week's reports lying on disk. Conflating any of these is how a cycle gets wasted, or worse, how a
+stale green is believed.
+
+```mermaid
+flowchart TD
+    R(["run finishes"]) --> T{"timed out?"}
+    T -->|yes| TO["timeout<br/>nothing was verified"]
+    T -->|no| X{"fresh report files<br/>written by this run?"}
+    X -->|no| N{"filter matched<br/>no tests?"}
+    N -->|yes| NR["no_results<br/>check the task and the filter"]
+    N -->|no| B{"compile or build<br/>error in the output?"}
+    B -->|yes| BF["build_failed<br/>the tests never ran"]
+    B -->|no| NR2["no_results<br/>this is NOT a pass"]
+    X -->|yes| F{"failures beyond<br/>the baseline?"}
+    F -->|yes| TF["tests_failed<br/>fix these named tests"]
+    F -->|no| P["passed<br/>advance the loop"]
+```
+
+The "fresh report files" test is not incidental. Before every run the tracker deletes the task's
+result directory — which both clears stale XML and makes Gradle consider the task out of date, so it
+genuinely re-runs. If no new reports appear afterwards, the outcome is `no_results`, never a pass.
+
+### Build output stays out of the context window
+
+The tracker runs Gradle itself. Full output goes to `.claude/tdd/logs/`; the model sees a capped
+summary of about twenty lines. Measured in the end-to-end walk, for one failing run:
+
+```
+full log on disk    ████████████████████████████████████████████████ 607 lines
+shown to the model  ▏ 4 lines
+```
+
+Over a long refactor that difference is the entire context budget. The summary lists regressions
+first, caps the failure list, truncates each message, and always ends with the log path so the model
+can `grep` deliberately instead of being handed everything.
+
+---
+
+## When a session dies
+
+Nothing to do. Run `next`.
+
+### The three layers of memory
+
+Redundant on purpose — the model only has to catch one of them.
+
+```mermaid
+flowchart TD
+    D(["session dies mid-refactor"]) --> N["a new session starts"]
+    N --> L1["layer 1: the CLAUDE.md block<br/>re-read every single session"]
+    N --> L2["layer 2: the SessionStart hook<br/>runs resume --brief automatically"]
+    DISK[("layer 3: on disk<br/>session.json + journal.jsonl")]
+    DISK --> L2
+    DISK --> R
+    L1 --> R["the model runs tdd next"]
+    L2 --> R
+    R --> W["work resumes,<br/>nothing re-derived"]
+```
+
+Layer 2 is the one that fixes the reported failure mode directly: a reconnecting model opens its very
+first turn already knowing the position, without spending a single tool call to find out.
+
+| Layer | Survives |
+|---|---|
+| `CLAUDE.md` block | everything; it is re-read at every session start |
+| `SessionStart` / `PreCompact` hooks | reconnects, compaction, context exhaustion |
+| `session.json` + `journal.jsonl` + `STATUS.md` | process kill, reboot, days later, a different human |
+
+### Why the state can always be rebuilt
+
+Every command expresses its change as a **patch** — a map of dotted paths to values — which is
+journaled and then applied. Nothing mutates state any other way.
+
+```mermaid
+flowchart LR
+    C(["a command runs"]) --> P["build a patch<br/>dotted path to value"]
+    P --> J["append to journal.jsonl<br/>flush and fsync"]
+    J --> S["apply to session.json<br/>temp file, then atomic rename"]
+    S --> M["regenerate STATUS.md"]
+    J -.->|"repair: replay every patch in order"| S
+```
+
+Because the journal is written *before* the state file, it is never behind — only ever ahead. And
+because replaying a patch is literally the same operation the command performed, `repair` reproduces
+the state **exactly**; there is no separate reducer that can drift out of sync with the mutation
+code. A test asserts byte-equality of `session.json` before and after deleting it and rebuilding.
+
+```bash
+python .claude/tdd/tddstate.py repair
+```
+
+That restores notes, the open increment, the red gate and the attempt counters. A half-written final
+line from a hard kill is skipped. `references/recovery.md` covers stale locks, timeouts and the rest.
+
+---
+
+## Layout
+
+```
+payload/.claude/           what gets copied into your repo
+  tdd/tddstate.py            the tracker: state machine, gradle runner, discovery
+  skills/tdd-loop/           SKILL.md + references loaded on demand
+  commands/                  /tdd-next, /tdd-status, /tdd-target
+  CLAUDE.tdd.md              the block merged into your CLAUDE.md
+install/install.py         installer (.ps1 / .sh are launchers)
+fixtures/                  sample Gradle project, recorded reports, e2e.py
+tests/                     253 tests
+DEVPLAN.md                 the design, and why each decision went the way it did
+```
+
+Inside your repo at runtime:
+
+```
+.claude/tdd/STATUS.md        human-readable mirror
+.claude/tdd/state/           session.json + append-only journal.jsonl  (gitignored)
+.claude/tdd/logs/            full build output                          (gitignored)
+.claude/tdd/snapshots/       per-increment file copies for revert-step  (gitignored)
+.claude/tdd/archive/         finished targets                           (gitignored)
+```
+
+---
+
+## Tests
+
+```bash
+cd tests && python -m unittest discover -s . -p "test_*.py"
+```
+
+253 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
+recorded fixtures, discovery against a real sample project, the guards, the installer, and the
+documentation itself — every command, flag and action code the skill mentions is checked against the
+CLI, because a weak model types what the docs tell it to type.
+
+The end-to-end walk is also runnable on its own:
+
+```bash
+python fixtures/e2e.py --keep
+```
+
+73 checks against a scratch copy of the sample project, installed the way you would install it,
+driving real subprocesses. Gradle is replaced by a stand-in that writes genuine JUnit XML and
+Cucumber messages — a real Gradle run would download dependencies, and this project does not use the
+network.
