@@ -12,7 +12,8 @@ it to work — `next` tells you what to do without it.
 ```
 init → discover unit → select unit → baseline unit
      → discover scenario → select scenario → baseline scenario
-     → step start → edit → run unit → (fix → run unit)* → run scenario → (fix → run scenario)*
+     → step start → edit → run unit → (fix → run unit)*
+                         → run scenario → (fix → run unit → run scenario)*
      → step done → (next increment …) → done
 ```
 
@@ -46,6 +47,12 @@ override, and is almost always the wrong call.
 **One increment at a time.** `step start` snapshots the files an increment may touch, which is what
 makes `revert-step` possible. An edit made before `step start` has no snapshot and cannot be undone
 by the tracker.
+
+**A scenario fix re-opens the unit gate.** Repairing a failing scenario means changing behaviour,
+and that change can break a unit test in the same increment. So the edit invalidates both results and
+you re-verify unit first, then scenarios. `run scenario` straight after such a fix is refused by the
+ordering gate. The increment is finished when both gates are green on runs newer than your last
+edit — not when the scenarios finally pass.
 
 **Freshness outranks greenness.** A green result recorded before your last edit proves nothing.
 `next` marks it STALE; `step done` refuses to close on it. This is the single most common way an

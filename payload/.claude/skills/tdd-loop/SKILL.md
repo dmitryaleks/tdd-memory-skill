@@ -86,7 +86,8 @@ the full command for you.
 | `START_STEP` | open one small increment with a clear title |
 | `AWAIT_EDIT` | write the code change for the increment that is open |
 | `RUN_UNIT` / `RUN_SCENARIO` | run those tests |
-| `FIX_UNIT` / `FIX_SCENARIO` | fix exactly the named tests, then re-run |
+| `FIX_UNIT` | fix exactly the named tests, then re-run them |
+| `FIX_SCENARIO` | fix them, then re-run **unit first and scenarios after** - the fix re-opens the unit gate |
 | `FIX_BUILD` | a compile or build error — the tests never ran |
 | `DIAGNOSE_RUN` | no reports were produced; this is **not** a pass |
 | `RERUN_TIMEOUT` | the run timed out; nothing was verified |

@@ -4,7 +4,7 @@ A Claude Code skill + hooks + local state tracker that gives an agentic Java ref
 durable memory, so that a slow/unstable LLM — or a brand-new Claude session taking over — can always
 answer two questions instantly: **where are we in the loop, and which tests do I run next?**
 
-- Status: **complete**. All eight steps delivered; 253 tests plus a 73-check end-to-end walk pass.
+- Status: **complete**. All eight steps delivered; 261 tests plus a 87-check end-to-end walk pass.
 - Date: 2026-09-12.
 - Scope of this document: the complete design plus a step-by-step implementation plan with
   acceptance criteria.
@@ -312,12 +312,18 @@ INIT → TARGET_SET → DISCOVER_UNIT → CONFIRM_UNIT → BASELINE_UNIT
      → DISCOVER_SCENARIO → CONFIRM_SCENARIO → BASELINE_SCENARIO → READY
      → STEP_OPEN ⇄ VERIFY_UNIT ⇄ FIX_UNIT
                  → VERIFY_SCENARIO ⇄ FIX_SCENARIO
-                 → STEP_GREEN → (STEP_OPEN | TARGET_DONE)
+                      FIX_SCENARIO → VERIFY_UNIT  (the fix re-opens the unit gate)
+                 → STEP_GREEN → (STEP_OPEN | INIT, target archived)
      ⊥ BLOCKED   (reachable from anywhere via `block`, left via `unblock`)
 ```
 
 Baselines are taken **before the first edit**, which is what allows pre-existing red tests to be
 distinguished from regressions the refactor introduced.
+
+`FIX_SCENARIO` does **not** loop back to `VERIFY_SCENARIO` alone. Repairing a scenario means changing
+behaviour, and that change can break a unit test within the same increment, so the edit invalidates
+both results and the gates are re-verified unit-first. An increment closes only when both are green
+on runs newer than the last edit — never on "the scenarios finally passed".
 
 `phase` is stored for human readability and for the journal, but it is *not* the source of truth for
 what to do next — §7 is. Storing a derived value and recomputing it independently means a corrupted
@@ -351,7 +357,7 @@ exhaustively.
 | 12 | unit result missing or stale | `RUN_UNIT` | Run the selected unit tests. | `tdd run unit` |
 | 13 | unit not green | `FIX_UNIT` | Fix *these* tests (listed), then re-run. Scenarios stay locked. | `tdd run unit` |
 | 14 | scenario applicable, result missing or stale | `RUN_SCENARIO` | Unit is green — now run the selected scenarios. | `tdd run scenario` |
-| 15 | scenario not green | `FIX_SCENARIO` | Fix *these* scenarios (listed), then re-run. | `tdd run scenario` |
+| 15 | scenario not green | `FIX_SCENARIO` | Fix *these* scenarios (listed), then re-verify **both** gates — the fix re-opens the unit gate. | `tdd run unit` |
 | 16 | all gates green, not dirty | `FINISH_STEP` | Both gates green — close the step. | `tdd step done` |
 | 17 | no open step, at least one closed | `NEXT_STEP_OR_DONE` | Start the next increment, or finish the target. | `tdd step start "…"` / `tdd done` |
 
@@ -745,7 +751,7 @@ machine.
 | 5 &#10003; | **Steps and guards** — `step start/done`, snapshots, `revert-step`, ordering + freshness gates, signature/streak escalation, `done`/archive | Each gate refusal exits 2 with a one-line reason; streak hits `ESCALATE` on the third identical signature; `revert-step` restores the snapshot byte-for-byte. |
 | 6 &#10003; | **Skill + references + slash commands** | `SKILL.md` ≤ 120 lines; references load only on demand; every documented command, flag and action code verified against the CLI. |
 | 7 &#10003; | **Hooks + installer + `doctor`** | Install into a scratch copy of the fixture; re-running the installer is idempotent; existing hooks in `settings.json` survive. |
-| 8 &#10003; | **Fixtures + tests** | §15 passes end to end: 253 unit tests plus a 73-check end-to-end walk. |
+| 8 &#10003; | **Fixtures + tests** | §15 passes end to end: 261 unit tests plus a 87-check end-to-end walk. |
 
 ---
 

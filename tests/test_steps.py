@@ -12,6 +12,8 @@ GREEN_XML = """<?xml version="1.0" encoding="UTF-8"?>
 </testsuite>
 """
 
+GLUE_SOURCE = "package com.acme.steps;\npublic class PricingSteps { int v; }\n"
+
 RED_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <testsuite name="com.acme.OrderTest" tests="2" skipped="0" failures="1" errors="0">
   <testcase name="totalsLines()" classname="com.acme.OrderTest" time="0.01"/>
@@ -37,6 +39,10 @@ class StepCase(GradleRepoCase):
 
     def edit_target(self, body="package com.acme;\npublic class Order { int x; }\n"):
         (self.repo / self.target).write_text(body, encoding="utf-8")
+
+    def variant(self, marker):
+        """A distinct edit of the target, named for what it is meant to do."""
+        return "package com.acme;\npublic class Order { int %s; }\n" % marker
 
     def green_run(self):
         self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
@@ -195,6 +201,97 @@ class TestFreshnessGate(StepCase):
         events = [e["event"] for e in tddstate.read_journal(self.ctx())]
         self.assertIn("override", events)
         self.assertIn("forced", self.ctx().state["steps_done"][0])
+
+
+class TestScenarioFixReopensTheUnitGate(StepCase):
+    """A scenario-driven fix is still a change to the behaviour under test.
+
+    Both gates have to go green again within the same increment, unit first:
+    the edit that satisfies a Cucumber scenario can just as easily break a
+    unit test.
+    """
+
+    SCEN_GREEN = ('<?xml version="1.0"?><testsuite name="c" tests="1" failures="0">'
+                  '<testcase name="Discount" classname="Orders"/></testsuite>')
+    SCEN_RED = ('<?xml version="1.0"?><testsuite name="c" tests="1" failures="1">'
+                '<testcase name="Discount" classname="Orders">'
+                '<failure message="expected 135 but was 150">x</failure>'
+                '</testcase></testsuite>')
+
+    def open_step_with_scenarios(self):
+        self.prepare_unit()
+        self.select(**{"scenario.selected": [
+            {"id": "app/src/test/resources/features/order.feature:14",
+             "name": "Discount", "status": "unknown"}],
+            "scenario.runner_class": "com.acme.RunCucumberTest",
+            "scenario.glue": ["app/src/test/java/com/acme/steps/PricingSteps.java"]})
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("baseline", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("baseline", "scenario")
+        self.cli("step", "start", "extract PriceCalculator")
+
+    def reach_a_red_scenario(self):
+        self.open_step_with_scenarios()
+        self.edit_target()
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_RED)], exit_code=1)
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FIX_SCENARIO")
+
+    def test_the_fix_instruction_sends_the_model_at_the_unit_gate(self):
+        """Its command must be the one that will be correct after the fix."""
+        self.reach_a_red_scenario()
+        self.cli("next")
+        self.assertIn("BOTH gates", self.last_output)
+        self.assertIn("run unit", self.last_output.split("CMD")[1])
+
+    def test_a_scenario_driven_edit_re_opens_the_unit_gate(self):
+        self.reach_a_red_scenario()
+        self.edit_target(self.variant("fixed"))
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+
+    def test_running_scenarios_straight_after_the_fix_is_refused(self):
+        self.reach_a_red_scenario()
+        self.edit_target(self.variant("fixed"))
+        self.assertEqual(self.cli("run", "scenario"), tddstate.EXIT_REFUSED)
+
+    def test_a_scenario_fix_that_breaks_a_unit_test_is_caught(self):
+        """The regression this ordering exists to prevent."""
+        self.reach_a_red_scenario()
+        self.edit_target(self.variant("broke"))
+        self.stub_gradle(xml=[("TEST-a.xml", RED_XML)], exit_code=1)
+        self.cli("run", "unit")
+        self.assertEqual(self.next_action(), "FIX_UNIT")
+        self.assertEqual(self.cli("step", "done"), tddstate.EXIT_REFUSED)
+
+    def test_the_increment_closes_only_once_both_gates_are_green_again(self):
+        self.reach_a_red_scenario()
+        self.edit_target(self.variant("fixed"))
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.assertEqual(self.next_action(), "RUN_SCENARIO")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+        self.assertEqual(self.cli("step", "done"), 0)
+
+    def test_editing_the_step_definitions_also_re_opens_both_gates(self):
+        """Cucumber failures are often repaired in the glue, not the source."""
+        self.reach_a_red_scenario()
+        self.edit_target(self.variant("fixed"))
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+
+        glue = self.repo / "app/src/test/java/com/acme/steps/PricingSteps.java"
+        glue.parent.mkdir(parents=True, exist_ok=True)
+        glue.write_text(GLUE_SOURCE, encoding="utf-8")
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+        self.assertEqual(self.cli("step", "done"), tddstate.EXIT_REFUSED)
 
 
 class TestAbandon(StepCase):

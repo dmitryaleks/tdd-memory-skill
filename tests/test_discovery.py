@@ -121,8 +121,8 @@ class TestScenarioDiscovery(unittest.TestCase):
 
     def setUp(self):
         self.ctx = tddstate.Ctx(SAMPLE)
-        self.candidates, self.runner, self.notes = tddstate.discover_scenario(
-            self.ctx, sample_state())
+        (self.candidates, self.runner, self.glue,
+         self.notes) = tddstate.discover_scenario(self.ctx, sample_state())
         self.by_id = {c["id"]: c for c in self.candidates}
 
     def test_the_target_scenario_is_found_through_the_step_definition_hop(self):
@@ -146,6 +146,16 @@ class TestScenarioDiscovery(unittest.TestCase):
 
     def test_the_cucumber_runner_is_identified_and_is_not_a_step_class(self):
         self.assertEqual(self.runner, "com.acme.RunCucumberTest")
+
+    def test_the_glue_that_drives_the_target_is_recorded_for_watching(self):
+        """A red scenario is usually repaired in the step definitions, so an
+        edit there has to invalidate the gates like any other."""
+        self.assertIn("app/src/test/java/com/acme/steps/PricingSteps.java", self.glue)
+        self.assertIn("app/src/test/java/com/acme/RunCucumberTest.java", self.glue)
+
+    def test_unrelated_glue_is_not_watched(self):
+        self.assertNotIn("app/src/test/java/com/acme/steps/ShippingSteps.java",
+                         self.glue)
 
     def test_candidates_are_ordered_by_score_then_line_number(self):
         lines = [int(c["id"].rpartition(":")[2]) for c in self.candidates
@@ -185,7 +195,7 @@ class TestGherkinParsing(unittest.TestCase):
                 "# language: de\nFunktionalitat: Bestellungen\n", encoding="utf-8")
             (tmp / "app" / "src" / "test" / "java").mkdir(parents=True)
             ctx = tddstate.Ctx(tmp)
-            _cands, _runner, notes = tddstate.discover_scenario(ctx, sample_state())
+            _c, _r, _g, notes = tddstate.discover_scenario(ctx, sample_state())
             self.assertTrue(any("language 'de'" in n for n in notes))
         finally:
             shutil.rmtree(str(tmp), ignore_errors=True)

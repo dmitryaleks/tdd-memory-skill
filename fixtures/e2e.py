@@ -66,7 +66,11 @@ if "SYNTAX ERROR" in source:
     print("> Run with --stacktrace option to get the stack trace.")
     sys.exit(1)
 
-red = "BROKEN" in source
+# Two markers: one breaks the unit tests, the other breaks only the
+# scenarios, so the walk can drive a scenario-only regression.
+scen_red = "SCEN BROKEN" in source
+unit_red = ("BROKEN" in source) and not scen_red
+red = scen_red if scenario else unit_red
 results.mkdir(parents=True, exist_ok=True)
 
 if scenario:
@@ -301,6 +305,36 @@ def main(argv=None):
     repo.tdd("run", "scenario", expect=0)
     repo.tdd("step", "done", expect=0)
     check("the increment is closed", repo.state()["steps_done"][0]["id"] == "s01")
+
+    section("a scenario-only regression")
+    # The case that matters most here: the scenarios go red while the unit
+    # tests are green. Repairing that is a behaviour change, so it re-opens
+    # the unit gate rather than looping around the scenarios alone.
+    repo.tdd("step", "start", "tighten the discount boundary", expect=0)
+    repo.write_target("SCEN BROKEN")
+    repo.tdd("run", "unit", expect=0)
+    repo.tdd("run", "scenario")
+    check("scenarios can fail while unit is green",
+          repo.state()["scenario"]["last_run"]["outcome"] == "tests_failed"
+          and repo.state()["unit"]["green"])
+    check("next asks for a scenario fix", repo.action() == "FIX_SCENARIO")
+    guidance = repo.tdd("next").stdout
+    check("the fix instruction names both gates", "BOTH gates" in guidance)
+    check("and points at the unit gate first",
+          "run unit" in guidance.split("CMD")[1])
+
+    repo.write_target()
+    check("the scenario fix re-opens the unit gate", repo.action() == "RUN_UNIT")
+    repo.tdd("run", "scenario", expect=2)
+    check("scenarios cannot be re-run before unit is verified again",
+          repo.action() == "RUN_UNIT")
+    repo.tdd("run", "unit", expect=0)
+    check("only then does it ask for the scenarios",
+          repo.action() == "RUN_SCENARIO")
+    repo.tdd("run", "scenario", expect=0)
+    check("the increment closes once both are green again",
+          repo.action() == "FINISH_STEP")
+    repo.tdd("step", "done", expect=0)
 
     section("losing the session")
     repo.tdd("step", "start", "inline the duplicate branch", expect=0)

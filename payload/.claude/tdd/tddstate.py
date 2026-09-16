@@ -410,6 +410,10 @@ def watched_files(state):
     for item in (state.get("scenario") or {}).get("selected") or []:
         ident = item.get("path") or item.get("id") or ""
         paths.append(ident.split(":")[0] if ident else "")
+    # The step definitions and the runner, recorded by `discover scenario`.
+    # A red scenario is very often repaired in the glue rather than in the
+    # production code, and such an edit must invalidate the gates too.
+    paths.extend((state.get("scenario") or {}).get("glue") or [])
     return [p for p in dict.fromkeys(paths) if p]
 
 
@@ -793,10 +797,12 @@ def _r15_fix_scenario(s, f):
     run = gate(s, "scenario").get("last_run") or {}
     failing = [x.get("id", "?") for x in run.get("failed") or []]
     return NA("FIX_SCENARIO",
-              "Unit tests pass but these scenarios fail - the behaviour changed. "
-              "Fix and re-run. Failing: %s" % join_ids(failing),
-              CMD + " run scenario",
-              "the scenario gate is red", 15)
+              "Unit tests pass but these scenarios fail, so the behaviour changed. "
+              "Fix them - then re-verify BOTH gates, unit first: the change you make "
+              "here can break the unit tests, and it invalidates their last result. "
+              "Failing: %s" % join_ids(failing),
+              CMD + " run unit",
+              "the scenario gate is red, and a fix for it re-opens the unit gate", 15)
 
 
 def _r16_finish_step(s, f):
@@ -1410,10 +1416,11 @@ def discover_scenario(ctx, state):
         if "." in (target.get("class_fqn") or "") else None
 
     sources = load_test_sources(ctx)
-    runner = next((e["fqn"] for e in sources
-                   if e["is_runner"] and not e["is_stepdef"]), None)
+    runner_entry = next((e for e in sources
+                         if e["is_runner"] and not e["is_stepdef"]), None)
+    runner = runner_entry["fqn"] if runner_entry else None
 
-    matchers, glue = [], []
+    matchers, glue, glue_paths = [], [], []
     for entry in sources:
         if not entry["is_stepdef"]:
             continue
@@ -1421,7 +1428,10 @@ def discover_scenario(ctx, state):
         if not why:
             continue
         glue.append("%s (%s)" % (entry["simple"], why))
+        glue_paths.append(entry["path"])
         matchers.extend(step_matchers(entry))
+    if runner_entry:
+        glue_paths.append(runner_entry["path"])
 
     notes = []
     if not glue:
@@ -1489,7 +1499,7 @@ def discover_scenario(ctx, state):
                                                % shared[0]}
 
     candidates = sorted(scored.values(), key=scenario_sort_key)[:MAX_CANDIDATES]
-    return candidates, runner, notes
+    return candidates, runner, glue_paths, notes
 
 
 def scenario_sort_key(cand):
@@ -2673,11 +2683,14 @@ def cmd_discover(args):
         candidates, notes, patch = discover_unit(ctx, ctx.state), [], {}
         patch["unit.candidates"] = candidates
     else:
-        candidates, runner, notes = discover_scenario(ctx, ctx.state)
-        patch = {"scenario.candidates": candidates}
+        candidates, runner, glue_paths, notes = discover_scenario(ctx, ctx.state)
+        patch = {"scenario.candidates": candidates, "scenario.glue": glue_paths}
         if runner and not gate(ctx.state, "scenario").get("runner_class"):
             patch["scenario.runner_class"] = runner
             notes.append("cucumber runner class detected: %s" % runner)
+        if glue_paths:
+            notes.append("watching %d glue file(s) for edits: %s"
+                         % (len(glue_paths), join_ids(glue_paths, 3)))
 
     with Lock(ctx, force=args.force_unlock):
         mutate(ctx, "discover", patch,
