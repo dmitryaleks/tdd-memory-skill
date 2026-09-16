@@ -27,8 +27,8 @@ disturbing hooks you already have, adds the `.gitignore` entries and the `CLAUDE
 Windows and POSIX launchers are provided (`install/install.ps1`, `install/install.sh`); both just
 hand off to `install.py`.
 
-Requirements: Python 3.8+, a Gradle project with a wrapper. Git is optional — without it an increment
-records no base commit, and everything else works.
+Requirements: Python 3.8+, and a Gradle project with a wrapper. Nothing else — `revert-step` restores
+from the tracker's own snapshots, not from version control.
 
 ### Check the setup
 
@@ -195,7 +195,7 @@ sequenceDiagram
     participant T as Tracker
     participant G as Gradle
     M->>T: step start extract PriceCalculator
-    T->>T: snapshot the files, record git HEAD
+    T->>T: snapshot the files it may touch
     M->>M: write the code change
     M->>T: run unit
     T->>G: gradlew :app:test --tests com.acme.OrderTest
@@ -489,7 +489,7 @@ payload/.claude/           what gets copied into your repo
   CLAUDE.tdd.md              the block merged into your CLAUDE.md
 install/install.py         installer (.ps1 / .sh are launchers)
 fixtures/                  sample Gradle project, recorded reports, e2e.py
-tests/                     275 tests
+tests/                     277 tests
 DEVPLAN.md                 the design, and why each decision went the way it did
 ```
 
@@ -511,7 +511,7 @@ Inside your repo at runtime:
 cd tests && python -m unittest discover -s . -p "test_*.py"
 ```
 
-275 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
+277 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
 recorded fixtures, discovery against a real sample project, the guards, the installer, and the
 documentation itself — every command, flag and action code the skill mentions is checked against the
 CLI, because a weak model types what the docs tell it to type.

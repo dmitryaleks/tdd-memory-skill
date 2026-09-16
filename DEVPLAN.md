@@ -4,7 +4,7 @@ A Claude Code skill + hooks + local state tracker that gives an agentic Java ref
 durable memory, so that a slow/unstable LLM — or a brand-new Claude session taking over — can always
 answer two questions instantly: **where are we in the loop, and which tests do I run next?**
 
-- Status: **complete**. All eight steps delivered; 275 tests plus a 87-check end-to-end walk pass.
+- Status: **complete**. All eight steps delivered; 277 tests plus a 87-check end-to-end walk pass.
 - Date: 2026-09-12.
 - Scope of this document: the complete design plus a step-by-step implementation plan with
   acceptance criteria.
@@ -722,8 +722,12 @@ reported, unless you pass `--force`.
 `doctor` checks: Python version; the import whitelist; Gradle wrapper present and executable; the
 test task exists; `src/test/java` and `**/*.feature` present; **cucumber system-property forwarding**
 (§9.3); state directory writable; hook block present in settings; runtime state gitignored; git
-availability (optional — only `base_commit` and `revert-step` degrade without it). Each check prints
-`OK` / `WARN` / `FAIL` with a one-line fix, and a `FAIL` exits non-zero.
+availability. Each check prints `OK` / `WARN` / `FAIL` with a one-line fix, and a `FAIL` exits
+non-zero.
+
+git is reported but never warned about. It supplies `base_commit`, which is recorded for information
+only — `revert-step` restores from the tracker's own snapshots — so on a machine without git a
+warning every run would be noise about something that needs no fixing.
 
 The forwarding check is **static** — it reads the build scripts rather than running the suite, which
 would be far too slow for a diagnostic — and says so. When a previous scenario run actually observed
@@ -762,7 +766,7 @@ machine.
 | 5 &#10003; | **Steps and guards** — `step start/done`, snapshots, `revert-step`, ordering + freshness gates, signature/streak escalation, `done`/archive | Each gate refusal exits 2 with a one-line reason; streak hits `ESCALATE` on the third identical signature; `revert-step` restores the snapshot byte-for-byte. |
 | 6 &#10003; | **Skill + references + slash commands** | `SKILL.md` ≤ 120 lines; references load only on demand; every documented command, flag and action code verified against the CLI. |
 | 7 &#10003; | **Hooks + installer + `doctor`** | Install into a scratch copy of the fixture; re-running the installer is idempotent; existing hooks in `settings.json` survive. |
-| 8 &#10003; | **Fixtures + tests** | §15 passes end to end: 275 unit tests plus a 87-check end-to-end walk. |
+| 8 &#10003; | **Fixtures + tests** | §15 passes end to end: 277 unit tests plus a 87-check end-to-end walk. |
 
 ---
 

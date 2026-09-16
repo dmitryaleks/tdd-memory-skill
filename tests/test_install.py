@@ -267,6 +267,22 @@ class TestDoctor(InstallCase):
         self.assertEqual(code, tddstate.EXIT_ERROR)
         self.assertIn("gradle wrapper missing", report)
 
+    def test_doctor_does_not_warn_about_a_machine_without_git(self):
+        """git is optional, so its absence needs no fixing and no warning."""
+        self.run_install()
+        real = tddstate.shutil.which
+        tddstate.shutil.which = lambda n: None if n == "git" else real(n)
+        try:
+            code, report = self.doctor()
+        finally:
+            tddstate.shutil.which = real
+        self.assertEqual(code, 0, report)
+        git_lines = [l for l in report.splitlines()
+                     if "git" in l.lower() and "gitignore" not in l.lower()]
+        self.assertTrue(git_lines)
+        for line in git_lines:
+            self.assertFalse(line.startswith("WARN"), line)
+
     def test_doctor_reports_the_runtime_state_gitignore(self):
         self.run_install()
         _code, report = self.doctor()

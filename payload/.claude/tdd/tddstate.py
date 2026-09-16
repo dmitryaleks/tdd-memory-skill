@@ -2594,9 +2594,11 @@ def cmd_doctor(args):
         add("OK", "git available%s" % (" (HEAD %s)" % head if head else
                                        " but this is not a repository"))
     else:
-        add("WARN", "git not on PATH",
-            "increments will record no base commit; revert-step still works from "
-            "the snapshots")
+        # Not a warning. git is genuinely optional: it supplies `base_commit`,
+        # which is recorded for information only, and `revert-step` restores
+        # from the tracker's own snapshots either way. Flagging it every run
+        # would be permanent noise on a machine that will never have git.
+        add("OK", "no git - increments record no base commit, which nothing reads")
 
     print("DOCTOR  %s" % ctx.repo)
     for level, label, detail in checks:
@@ -3061,10 +3063,14 @@ def cmd_revert_step(args):
 
     restored, missing = restore_snapshot(ctx, step.get("id"), files)
     if not restored:
+        commit = step.get("base_commit")
+        hint = ("this increment opened at commit %s, so `git checkout %s -- %s` "
+                "restores them" % (commit, commit, " ".join(files[:3]))
+                if commit else
+                "no base commit was recorded, so recover them from your editor's "
+                "local history, or redo the increment from scratch")
         raise TddError("snapshot for %s is gone from .claude/tdd/snapshots - "
-                       "restore the files yourself (git checkout works if the "
-                       "increment recorded a base commit: %s)"
-                       % (step.get("id"), step.get("base_commit") or "none"),
+                       "restore the files yourself: %s" % (step.get("id"), hint),
                        EXIT_REFUSED)
 
     # The increment starts over: same title, clean slate, gates unverified.

@@ -550,14 +550,32 @@ class TestRevert(StepCase):
         self.baseline()
         self.assertEqual(self.cli("revert-step"), tddstate.EXIT_REFUSED)
 
-    def test_a_deleted_snapshot_is_reported_with_the_git_fallback(self):
-        self.open_step()
+    def lose_the_snapshot(self):
         import shutil as _shutil
         _shutil.rmtree(str(self.repo / ".claude" / "tdd" / "snapshots" / "s01"))
         with _capture_stderr() as err:
             code = self.cli("revert-step")
         self.assertEqual(code, tddstate.EXIT_REFUSED)
-        self.assertIn("git checkout", err.getvalue())
+        return err.getvalue()
+
+    def test_a_deleted_snapshot_without_a_commit_suggests_nothing_about_git(self):
+        """The target environment may have no version control at all."""
+        self.open_step()
+        message = self.lose_the_snapshot()
+        self.assertIn("no base commit was recorded", message)
+        self.assertNotIn("git", message)
+
+    def test_a_deleted_snapshot_offers_the_commit_when_one_was_recorded(self):
+        """A recorded commit means git was there when the increment opened."""
+        self.open_step()
+        ctx = self.ctx()
+        with tddstate.Lock(ctx, force=True):
+            step = dict(ctx.state["step"])
+            step["base_commit"] = "abc1234"
+            tddstate.mutate(ctx, "step_start", {"step": step})
+        message = self.lose_the_snapshot()
+        self.assertIn("abc1234", message)
+        self.assertIn("git checkout", message)
 
 
 class TestDone(StepCase):
