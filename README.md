@@ -118,13 +118,17 @@ stateDiagram-v2
     CONFIRM_SCENARIO --> READY: select scenario, none apply
     BASELINE_SCENARIO --> READY: baseline scenario
     READY --> STEP_OPEN: step start
-    STEP_OPEN --> VERIFY_UNIT: code edited
+    STEP_OPEN --> VERIFY_UNIT: first edit
     VERIFY_UNIT --> FIX_UNIT: regressions
-    FIX_UNIT --> VERIFY_UNIT: run unit
-    VERIFY_UNIT --> VERIFY_SCENARIO: unit green
+    FIX_UNIT --> VERIFY_UNIT: re-run unit
+    VERIFY_UNIT --> VERIFY_SCENARIO: unit green, scenario stale
+    VERIFY_UNIT --> STEP_GREEN: unit green, scenario still valid
     VERIFY_SCENARIO --> FIX_SCENARIO: regressions
-    FIX_SCENARIO --> VERIFY_UNIT: fix edited, both gates re-open
+    FIX_SCENARIO --> VERIFY_UNIT: fix touched production code
+    FIX_SCENARIO --> VERIFY_SCENARIO: fix touched only glue or features
     VERIFY_SCENARIO --> STEP_GREEN: scenario green
+    STEP_GREEN --> VERIFY_UNIT: later edit, unit side
+    STEP_GREEN --> VERIFY_SCENARIO: later edit, scenario side
     STEP_GREEN --> STEP_OPEN: step start
     STEP_GREEN --> INIT: done, target archived
     STEP_OPEN --> BLOCKED: block
@@ -137,10 +141,14 @@ reachable from *any* phase, not just `STEP_OPEN` as drawn; only `unblock` leaves
 returns to `INIT` rather than to a terminal state: finishing a target archives it and leaves the loop
 ready for the next file, so this really is a cycle.
 
-And `FIX_SCENARIO` returns to `VERIFY_UNIT`, not to `VERIFY_SCENARIO`. A scenario failure is repaired
-by changing behaviour, and that change can just as easily break a unit test — so the edit invalidates
-*both* results, and the gates are re-verified in the usual order. Getting the scenarios green is not
-the end of the increment; getting both green **on runs newer than your last edit** is.
+And the paths out of `FIX_SCENARIO` depend on *what the fix touched*. Change production code and the
+unit gate re-opens with it, so the loop returns to `VERIFY_UNIT` — a scenario failure is repaired by
+changing behaviour, and that can just as easily break a unit test. Change only the glue or a feature
+file and the unit result still stands, so it returns to `VERIFY_SCENARIO`.
+
+`STEP_GREEN` is not a resting place either: any later edit re-opens whichever gate it affects, which
+is why the two edges leave it. Getting the scenarios green is never the end of an increment; getting
+every applicable gate green **on runs newer than your last edit** is.
 
 The phase is stored for humans and for the journal, but it is never the source of truth for what to
 do next. That is recomputed from scratch on every call, so a hand-edited or corrupted phase cannot
@@ -481,7 +489,7 @@ payload/.claude/           what gets copied into your repo
   CLAUDE.tdd.md              the block merged into your CLAUDE.md
 install/install.py         installer (.ps1 / .sh are launchers)
 fixtures/                  sample Gradle project, recorded reports, e2e.py
-tests/                     269 tests
+tests/                     275 tests
 DEVPLAN.md                 the design, and why each decision went the way it did
 ```
 
@@ -503,7 +511,7 @@ Inside your repo at runtime:
 cd tests && python -m unittest discover -s . -p "test_*.py"
 ```
 
-269 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
+275 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
 recorded fixtures, discovery against a real sample project, the guards, the installer, and the
 documentation itself — every command, flag and action code the skill mentions is checked against the
 CLI, because a weak model types what the docs tell it to type.

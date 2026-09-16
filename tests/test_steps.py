@@ -402,6 +402,80 @@ class TestPerGateWatching(StepCase):
         self.assertEqual(self.next_action(), "RUN_UNIT")
 
 
+class TestDocumentedTransitions(StepCase):
+    """The edges drawn in the README and DEVPLAN state machines.
+
+    They have drifted from the code once already, so each one is pinned here.
+    """
+
+    def both_green(self):
+        self.open_step_with_scenarios()
+        self.edit_target()
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+
+    def touch(self, rel, body):
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    def test_verify_unit_to_step_green_when_the_scenario_result_still_stands(self):
+        self.both_green()
+        self.touch("app/src/test/java/com/acme/OrderTest.java", UNIT_SOURCE)
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+
+    def test_verify_unit_to_verify_scenario_when_production_code_changed(self):
+        self.both_green()
+        self.edit_target(self.variant("changed"))
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.assertEqual(self.next_action(), "RUN_SCENARIO")
+
+    def test_step_green_to_verify_scenario_on_a_scenario_side_edit(self):
+        self.both_green()
+        self.touch("app/src/test/java/com/acme/steps/PricingSteps.java", GLUE_SOURCE)
+        self.assertEqual(self.next_action(), "RUN_SCENARIO")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+
+    def test_fix_scenario_to_verify_unit_when_the_fix_is_in_production_code(self):
+        self.open_step_with_scenarios()
+        self.edit_target()
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_RED)], exit_code=1)
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FIX_SCENARIO")
+        self.edit_target(self.variant("repaired"))
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+
+    def test_fix_scenario_to_verify_scenario_when_the_fix_is_in_the_glue(self):
+        self.open_step_with_scenarios()
+        self.edit_target()
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_RED)], exit_code=1)
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FIX_SCENARIO")
+        self.touch("app/src/test/java/com/acme/steps/PricingSteps.java", GLUE_SOURCE)
+        self.assertEqual(self.next_action(), "RUN_SCENARIO")
+
+    def test_step_open_always_verifies_the_unit_gate_first(self):
+        """At step start both gates predate the increment, so unit leads."""
+        self.open_step_with_scenarios()
+        self.assertEqual(self.next_action(), "AWAIT_EDIT")
+        self.edit_target()
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+
+
 class TestAbandon(StepCase):
 
     def test_abandon_closes_without_the_gates(self):
