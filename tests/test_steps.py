@@ -13,6 +13,9 @@ GREEN_XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 GLUE_SOURCE = "package com.acme.steps;\npublic class PricingSteps { int v; }\n"
+CALC_SOURCE = "package com.acme;\nclass PriceCalculator {}\n"
+UNIT_SOURCE = "package com.acme;\nclass OrderTest { int v; }\n"
+FEATURE_SOURCE = "Feature: Orders\n  Scenario: Discount\n    Given a basket\n"
 
 RED_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <testsuite name="com.acme.OrderTest" tests="2" skipped="0" failures="1" errors="0">
@@ -43,6 +46,26 @@ class StepCase(GradleRepoCase):
     def variant(self, marker):
         """A distinct edit of the target, named for what it is meant to do."""
         return "package com.acme;\npublic class Order { int %s; }\n" % marker
+
+    SCEN_GREEN = ('<?xml version="1.0"?><testsuite name="c" tests="1" failures="0">'
+                  '<testcase name="Discount" classname="Orders"/></testsuite>')
+    SCEN_RED = ('<?xml version="1.0"?><testsuite name="c" tests="1" failures="1">'
+                '<testcase name="Discount" classname="Orders">'
+                '<failure message="expected 135 but was 150">x</failure>'
+                '</testcase></testsuite>')
+
+    def open_step_with_scenarios(self):
+        self.prepare_unit()
+        self.select(**{"scenario.selected": [
+            {"id": "app/src/test/resources/features/order.feature:14",
+             "name": "Discount", "status": "unknown"}],
+            "scenario.runner_class": "com.acme.RunCucumberTest",
+            "scenario.glue": ["app/src/test/java/com/acme/steps/PricingSteps.java"]})
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("baseline", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("baseline", "scenario")
+        self.cli("step", "start", "extract PriceCalculator")
 
     def green_run(self):
         self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
@@ -211,26 +234,6 @@ class TestScenarioFixReopensTheUnitGate(StepCase):
     unit test.
     """
 
-    SCEN_GREEN = ('<?xml version="1.0"?><testsuite name="c" tests="1" failures="0">'
-                  '<testcase name="Discount" classname="Orders"/></testsuite>')
-    SCEN_RED = ('<?xml version="1.0"?><testsuite name="c" tests="1" failures="1">'
-                '<testcase name="Discount" classname="Orders">'
-                '<failure message="expected 135 but was 150">x</failure>'
-                '</testcase></testsuite>')
-
-    def open_step_with_scenarios(self):
-        self.prepare_unit()
-        self.select(**{"scenario.selected": [
-            {"id": "app/src/test/resources/features/order.feature:14",
-             "name": "Discount", "status": "unknown"}],
-            "scenario.runner_class": "com.acme.RunCucumberTest",
-            "scenario.glue": ["app/src/test/java/com/acme/steps/PricingSteps.java"]})
-        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
-        self.cli("baseline", "unit")
-        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
-        self.cli("baseline", "scenario")
-        self.cli("step", "start", "extract PriceCalculator")
-
     def reach_a_red_scenario(self):
         self.open_step_with_scenarios()
         self.edit_target()
@@ -277,8 +280,12 @@ class TestScenarioFixReopensTheUnitGate(StepCase):
         self.assertEqual(self.next_action(), "FINISH_STEP")
         self.assertEqual(self.cli("step", "done"), 0)
 
-    def test_editing_the_step_definitions_also_re_opens_both_gates(self):
-        """Cucumber failures are often repaired in the glue, not the source."""
+    def test_editing_the_step_definitions_re_opens_the_scenario_gate(self):
+        """Cucumber failures are often repaired in the glue, not the source.
+
+        Glue drives the scenarios only, so it re-opens that gate alone - but
+        it must still block the increment from closing.
+        """
         self.reach_a_red_scenario()
         self.edit_target(self.variant("fixed"))
         self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
@@ -290,8 +297,109 @@ class TestScenarioFixReopensTheUnitGate(StepCase):
         glue = self.repo / "app/src/test/java/com/acme/steps/PricingSteps.java"
         glue.parent.mkdir(parents=True, exist_ok=True)
         glue.write_text(GLUE_SOURCE, encoding="utf-8")
-        self.assertEqual(self.next_action(), "RUN_UNIT")
+        self.assertEqual(self.next_action(), "RUN_SCENARIO")
         self.assertEqual(self.cli("step", "done"), tddstate.EXIT_REFUSED)
+
+
+class TestPerGateWatching(StepCase):
+    """Each gate watches only what can actually change its result.
+
+    Production code affects both. Beyond that they are independent: a feature
+    file cannot change what the unit tests do, and a unit test cannot change
+    what the scenarios do.
+    """
+
+    def both_green(self):
+        self.open_step_with_scenarios()
+        self.edit_target()
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("run", "unit")
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("run", "scenario")
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+
+    def touch(self, rel, body):
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    def test_each_gate_watches_its_own_side(self):
+        self.open_step_with_scenarios()
+        state = self.ctx().state
+        unit = tddstate.watched_files(state, "unit")
+        scen = tddstate.watched_files(state, "scenario")
+        self.assertIn("app/src/test/java/com/acme/OrderTest.java", unit)
+        self.assertNotIn("app/src/test/resources/features/order.feature", unit)
+        self.assertIn("app/src/test/resources/features/order.feature", scen)
+        self.assertIn("app/src/test/java/com/acme/steps/PricingSteps.java", scen)
+        self.assertNotIn("app/src/test/java/com/acme/OrderTest.java", scen)
+
+    def test_the_target_is_watched_by_both(self):
+        self.open_step_with_scenarios()
+        state = self.ctx().state
+        for kind in ("unit", "scenario"):
+            self.assertIn(self.target, tddstate.watched_files(state, kind), kind)
+
+    def test_files_declared_on_the_increment_are_watched_by_both(self):
+        extra = "app/src/main/java/com/acme/PriceCalculator.java"
+        self.touch(extra, CALC_SOURCE)
+        self.prepare_unit()
+        self.select(**{"scenario.not_applicable": True, "scenario.green": True})
+        self.stub_gradle(xml=[("TEST-a.xml", GREEN_XML)])
+        self.cli("baseline", "unit")
+        self.cli("step", "start", "extract calc", "--file", extra)
+        for kind in ("unit", "scenario"):
+            self.assertIn(extra, tddstate.watched_files(self.ctx().state, kind), kind)
+
+    def test_editing_a_feature_file_leaves_the_unit_result_alone(self):
+        self.both_green()
+        self.touch("app/src/test/resources/features/order.feature", FEATURE_SOURCE)
+        facts = tddstate.gather_facts(self.ctx())
+        state = self.ctx().state
+        self.assertIsNone(tddstate.staleness(state, "unit", facts))
+        self.assertIsNotNone(tddstate.staleness(state, "scenario", facts))
+        self.assertEqual(self.next_action(), "RUN_SCENARIO")
+
+    def test_editing_a_unit_test_leaves_the_scenario_result_alone(self):
+        self.both_green()
+        self.touch("app/src/test/java/com/acme/OrderTest.java", UNIT_SOURCE)
+        facts = tddstate.gather_facts(self.ctx())
+        state = self.ctx().state
+        self.assertIsNotNone(tddstate.staleness(state, "unit", facts))
+        self.assertIsNone(tddstate.staleness(state, "scenario", facts))
+        self.assertEqual(self.next_action(), "RUN_UNIT")
+
+    def test_a_feature_edit_does_not_force_a_pointless_unit_re_run(self):
+        """The whole point of scoping: one gate re-runs, not both."""
+        self.both_green()
+        self.touch("app/src/test/resources/features/order.feature", FEATURE_SOURCE)
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.assertEqual(self.cli("run", "scenario"), 0)
+        self.assertEqual(self.next_action(), "FINISH_STEP")
+
+    def test_production_code_still_invalidates_both(self):
+        self.both_green()
+        self.edit_target(self.variant("changed"))
+        facts = tddstate.gather_facts(self.ctx())
+        state = self.ctx().state
+        for kind in ("unit", "scenario"):
+            self.assertIsNotNone(tddstate.staleness(state, kind, facts), kind)
+
+    def test_a_scenario_run_does_not_clear_dirt_owned_by_the_unit_gate(self):
+        self.both_green()
+        self.touch("app/src/test/java/com/acme/OrderTest.java", UNIT_SOURCE)
+        ctx = self.ctx()
+        with tddstate.Lock(ctx, force=True):
+            tddstate.mutate(ctx, "touch", {
+                "freshness.dirty": True,
+                "freshness.dirty_files": ["app/src/test/java/com/acme/OrderTest.java"]})
+        self.stub_gradle(xml=[("TEST-c.xml", self.SCEN_GREEN)])
+        self.cli("run", "scenario")
+        state = self.ctx().state
+        self.assertTrue(state["freshness"]["dirty"])
+        self.assertIn("app/src/test/java/com/acme/OrderTest.java",
+                      state["freshness"]["dirty_files"])
+        self.assertEqual(self.next_action(), "RUN_UNIT")
 
 
 class TestAbandon(StepCase):

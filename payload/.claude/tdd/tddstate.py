@@ -398,22 +398,33 @@ class Lock(object):
 # filesystem facts (kept separate so the resolver stays pure)
 # --------------------------------------------------------------------------
 
-def watched_files(state):
-    """Files whose modification invalidates a test result."""
+def watched_files(state, kind=None):
+    """Files whose modification invalidates a test result.
+
+    Scoped per gate. Production code - the target, plus any extra files the
+    increment declared with `step start --file` - affects both gates. Beyond
+    that the two are independent: editing a `.feature` file cannot change what
+    the unit tests do, and editing a unit test cannot change what the
+    scenarios do. `kind=None` returns the union, which is what the editing
+    hook needs to decide whether an edit is interesting at all.
+    """
     paths = []
     target = state.get("target") or {}
     if target.get("path"):
         paths.append(target["path"])
-    for item in (state.get("unit") or {}).get("selected") or []:
-        if item.get("path"):
-            paths.append(item["path"])
-    for item in (state.get("scenario") or {}).get("selected") or []:
-        ident = item.get("path") or item.get("id") or ""
-        paths.append(ident.split(":")[0] if ident else "")
-    # The step definitions and the runner, recorded by `discover scenario`.
-    # A red scenario is very often repaired in the glue rather than in the
-    # production code, and such an edit must invalidate the gates too.
-    paths.extend((state.get("scenario") or {}).get("glue") or [])
+    paths.extend((state.get("step") or {}).get("files") or [])
+    if kind in (None, "unit"):
+        for item in (state.get("unit") or {}).get("selected") or []:
+            if item.get("path"):
+                paths.append(item["path"])
+    if kind in (None, "scenario"):
+        for item in (state.get("scenario") or {}).get("selected") or []:
+            ident = item.get("path") or item.get("id") or ""
+            paths.append(ident.split(":")[0] if ident else "")
+        # The step definitions and the runner, recorded by `discover scenario`.
+        # A red scenario is very often repaired in the glue rather than in the
+        # production code, and such an edit must invalidate the gate too.
+        paths.extend((state.get("scenario") or {}).get("glue") or [])
     return [p for p in dict.fromkeys(paths) if p]
 
 
@@ -487,9 +498,16 @@ def staleness(state, kind, facts):
     started = step.get("started_at_epoch")
     if ran is not None and started is not None and ran < float(started):
         return "predates the current step"
-    if (state.get("freshness") or {}).get("dirty"):
-        files = (state.get("freshness") or {}).get("dirty_files") or []
-        return "edited since (%s)" % join_ids(files, 2) if files else "edited since"
+    scope = set(watched_files(state, kind))
+    freshness = state.get("freshness") or {}
+    if freshness.get("dirty"):
+        files = freshness.get("dirty_files") or []
+        mine = [f for f in files if f in scope]
+        if mine:
+            return "edited since (%s)" % join_ids(mine, 2)
+        if not files:
+            return "edited since"      # legacy state, no file list: be careful
+
     # Exact comparison against the mtimes recorded when the run started.
     # Ordering a file's mtime against the run's clock is unreliable: the two
     # can be microseconds apart, and filesystems differ in mtime resolution,
@@ -499,13 +517,15 @@ def staleness(state, kind, facts):
     if isinstance(recorded, dict):
         current = facts.get("mtimes") or {}
         for rel, was in recorded.items():
+            if rel not in scope:
+                continue           # belongs to the other gate
             now = current.get(rel)
             if now is None:
                 return "%s is gone since the run" % rel
             if abs(float(now) - float(was)) > 1e-6:
                 return "%s changed after the run" % rel
-        for rel in current:
-            if rel not in recorded:
+        for rel in scope:
+            if rel not in recorded and rel in current:
                 return "%s appeared after the run" % rel
         return None
 
@@ -2073,8 +2093,12 @@ def do_run(ctx, kind, timeout, baseline=False):
 
     argv = build_argv(ctx, state, kind, task, gradle_project, module)
     # Taken as close to the launch as possible: anything edited after this
-    # point is, correctly, not covered by the result.
-    watched_at_start = gather_facts(ctx).get("mtimes") or {}
+    # point is, correctly, not covered by the result. Only this gate's files
+    # are recorded, so a .feature edit cannot invalidate a unit result.
+    scope = set(watched_files(state, kind))
+    watched_at_start = dict((rel, mtime)
+                            for rel, mtime in (gather_facts(ctx).get("mtimes") or {}).items()
+                            if rel in scope)
     start_iso, start_epoch = stamp()
     exit_code, output, duration, timed_out = run_process(argv, ctx.repo, timeout)
 
@@ -2106,6 +2130,9 @@ def do_run(ctx, kind, timeout, baseline=False):
         "build_error": build_error, "warnings": warnings,
     }
 
+    still_dirty = [f for f in (state.get("freshness") or {}).get("dirty_files") or []
+                   if f not in scope]
+
     attempts = dict(state.get("attempts") or {})
     key = "verify_unit" if kind == "unit" else "verify_scenario"
     if not baseline:
@@ -2124,8 +2151,10 @@ def do_run(ctx, kind, timeout, baseline=False):
         "%s.green" % kind: green,
         "%s.selected" % kind: update_selected_status(state, kind, report),
         "attempts": attempts,
-        "freshness.dirty": False,
-        "freshness.dirty_files": [],
+        # Only the dirt this run actually accounts for is cleared; an edit to
+        # the other gate's files is still outstanding.
+        "freshness.dirty": bool(still_dirty),
+        "freshness.dirty_files": still_dirty,
         "freshness.last_verified_at": start_iso,
     }
     if baseline:
@@ -2869,10 +2898,14 @@ def cmd_record(args):
         "signature": None, "green": passed, "regressions": [], "pre_existing": [],
         "build_error": [], "warnings": ["result entered by hand, not parsed"],
     }
+    scope = set(watched_files(ctx.state, kind))
+    still_dirty = [f for f in (ctx.state.get("freshness") or {}).get("dirty_files") or []
+                   if f not in scope]
     with Lock(ctx, force=args.force_unlock):
         mutate(ctx, "record",
                {"%s.last_run" % kind: last_run, "%s.green" % kind: passed,
-                "freshness.dirty": False, "freshness.dirty_files": [],
+                "freshness.dirty": bool(still_dirty),
+                "freshness.dirty_files": still_dirty,
                 "freshness.last_verified_at": iso},
                summary="record %s -> %s (manual)" % (kind, args.result),
                data={"summary": "record %s -> %s (manual)" % (kind, args.result),

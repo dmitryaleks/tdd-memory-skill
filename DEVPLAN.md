@@ -4,7 +4,7 @@ A Claude Code skill + hooks + local state tracker that gives an agentic Java ref
 durable memory, so that a slow/unstable LLM — or a brand-new Claude session taking over — can always
 answer two questions instantly: **where are we in the loop, and which tests do I run next?**
 
-- Status: **complete**. All eight steps delivered; 261 tests plus a 87-check end-to-end walk pass.
+- Status: **complete**. All eight steps delivered; 269 tests plus a 87-check end-to-end walk pass.
 - Date: 2026-09-12.
 - Scope of this document: the complete design plus a step-by-step implementation plan with
   acceptance criteria.
@@ -106,9 +106,12 @@ them:
 
 1. **Ordering gate** — `run scenario` is refused while the unit gate is red. (`--force` exists and
    is journaled as an override.)
-2. **Freshness gate** — `step done` is refused while `freshness.dirty` is set, i.e. the target or a
-   selected test file has an mtime newer than the last verified run. This is what stops "declared
-   green on stale results".
+2. **Freshness gate** — `step done` is refused while any file the gate watches differs from what it
+   was when the verifying run started. This is what stops "declared green on stale results". The
+   watch is scoped per gate: the target and any file declared with `step start --file` re-open both
+   gates, a selected unit test re-opens only the unit gate, and a `.feature` file, a step definition
+   or the Cucumber runner re-opens only the scenario gate. Production code affects both; beyond that
+   the two sides cannot influence each other, and scoping keeps one edit from re-running the lot.
 **Freshness is decided by comparing recorded mtimes, not by ordering timestamps.** Each run stores
 the mtime of every watched file as it launches; a result is stale when any of those differs now.
 Ordering a file's mtime against the run's clock looked equivalent and is not: the two events can be
@@ -751,7 +754,7 @@ machine.
 | 5 &#10003; | **Steps and guards** — `step start/done`, snapshots, `revert-step`, ordering + freshness gates, signature/streak escalation, `done`/archive | Each gate refusal exits 2 with a one-line reason; streak hits `ESCALATE` on the third identical signature; `revert-step` restores the snapshot byte-for-byte. |
 | 6 &#10003; | **Skill + references + slash commands** | `SKILL.md` ≤ 120 lines; references load only on demand; every documented command, flag and action code verified against the CLI. |
 | 7 &#10003; | **Hooks + installer + `doctor`** | Install into a scratch copy of the fixture; re-running the installer is idempotent; existing hooks in `settings.json` survive. |
-| 8 &#10003; | **Fixtures + tests** | §15 passes end to end: 261 unit tests plus a 87-check end-to-end walk. |
+| 8 &#10003; | **Fixtures + tests** | §15 passes end to end: 269 unit tests plus a 87-check end-to-end walk. |
 
 ---
 

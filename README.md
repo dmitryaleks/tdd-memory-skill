@@ -341,9 +341,20 @@ Four guards live in the program rather than in the prompt, so a model cannot tal
 over a red unit gate tells you nothing — it would fail either way.
 
 **Freshness before greenness.** `step done` is refused when a watched file has changed since the run
-that verified it. Each run records the mtime of every watched file as it starts, and a result is
-stale when any of those differs now. This is the single most common way an agentic loop convinces
-itself it has finished.
+that verified it. Each run records the mtime of every file that gate watches as it starts, and a
+result is stale when any of those differs now. This is the single most common way an agentic loop
+convinces itself it has finished.
+
+The watch is scoped per gate, so one edit does not needlessly re-run everything:
+
+| Edited | Unit gate | Scenario gate |
+|---|---|---|
+| the target, or a file declared with `step start --file` | re-opens | re-opens |
+| a selected unit test | re-opens | untouched |
+| a `.feature` file, a step definition, the runner | untouched | re-opens |
+
+Production code affects both. Beyond that the sides are independent: a `.feature` file cannot change
+what a unit test does, and a unit test cannot change what a scenario does.
 
 > Why recorded mtimes rather than comparing timestamps? Because the gap between a run starting and an
 > edit landing can be **26 microseconds** — measured, not guessed — and filesystems differ in mtime
@@ -470,7 +481,7 @@ payload/.claude/           what gets copied into your repo
   CLAUDE.tdd.md              the block merged into your CLAUDE.md
 install/install.py         installer (.ps1 / .sh are launchers)
 fixtures/                  sample Gradle project, recorded reports, e2e.py
-tests/                     261 tests
+tests/                     269 tests
 DEVPLAN.md                 the design, and why each decision went the way it did
 ```
 
@@ -492,7 +503,7 @@ Inside your repo at runtime:
 cd tests && python -m unittest discover -s . -p "test_*.py"
 ```
 
-261 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
+269 tests, offline, a few seconds. They cover the resolver row by row, the report parsers against
 recorded fixtures, discovery against a real sample project, the guards, the installer, and the
 documentation itself — every command, flag and action code the skill mentions is checked against the
 CLI, because a weak model types what the docs tell it to type.

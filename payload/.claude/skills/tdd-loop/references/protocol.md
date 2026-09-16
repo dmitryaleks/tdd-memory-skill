@@ -55,7 +55,10 @@ ordering gate. The increment is finished when both gates are green on runs newer
 edit — not when the scenarios finally pass.
 
 **Freshness outranks greenness.** A green result recorded before your last edit proves nothing.
-`next` marks it STALE; `step done` refuses to close on it. This is the single most common way an
+`next` marks it STALE; `step done` refuses to close on it. Each gate watches only what can change
+its own result: the target (and anything you passed to `step start --file`) re-opens both, a unit
+test re-opens the unit gate alone, and a feature file, step definition or the runner re-opens the
+scenario gate alone. This is the single most common way an
 agentic loop convinces itself it is finished when it is not.
 
 ---
