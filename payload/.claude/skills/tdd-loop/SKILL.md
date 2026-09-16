@@ -88,25 +88,33 @@ the full command for you.
 | `RUN_UNIT` / `RUN_SCENARIO` | run those tests |
 | `FIX_UNIT` | fix exactly the named tests, then re-run them |
 | `FIX_SCENARIO` | fix them, then re-run **unit first and scenarios after** - the fix re-opens the unit gate |
-| `FIX_BUILD` | a compile or build error — the tests never ran |
-| `DIAGNOSE_RUN` | no reports were produced; this is **not** a pass |
-| `RERUN_TIMEOUT` | the run timed out; nothing was verified |
+| `FIX_BUILD` / `DIAGNOSE_RUN` / `RERUN_TIMEOUT` | no verdict was produced — a build error, no reports, or a timeout. The summary says which. Never read any of them as a pass |
 | `ESCALATE` | stop editing; revert or ask the human |
 | `FINISH_STEP` | `step done` |
 | `NEXT_STEP_OR_DONE` | open the next increment, or `done` |
 | `UNBLOCK` | a human decision is outstanding |
 | `REPAIR` | `repair` rebuilds the state from the journal — nothing is lost |
 
-## Keep increments small
+## The increment loop
 
-One increment is one named change: "extract PriceCalculator", "inline the duplicate branch". If you
-cannot put it in a short title, it is too big. Small increments make `revert-step` cheap and keep
-the failure signature meaningful.
+```
+step start → edit → run unit → (fix → run unit)*
+                  → run scenario → (fix → re-verify what it touched)*
+                  → step done
+```
+
+A scenario fix that changes production code re-opens the unit gate too; a fix confined to a step
+definition or a feature file re-opens the scenario gate only. Never work out which yourself — `next`
+names the command. An increment closes when every applicable gate is green **on runs newer than your
+last edit**, never because the scenarios finally passed.
+
+One increment is one named change: "extract PriceCalculator", "inline the duplicate branch". If the
+title needs an "and", split it. Small increments make `revert-step` cheap and keep the failure
+signature meaningful.
 
 ## When something looks wrong
 
 - `... status` — the full picture, including both baselines and the last run.
-- `references/recovery.md` — lost session, corrupt state, stale lock, no results, timeouts,
-  overrides.
+- `references/recovery.md` — lost session, corrupt state, stale lock, no verdict, overrides.
 - `references/protocol.md` — what each phase means and why the order is fixed.
 - `references/discovery.md` — how to prune candidate tests well.

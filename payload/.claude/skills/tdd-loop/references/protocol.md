@@ -13,9 +13,21 @@ it to work — `next` tells you what to do without it.
 init → discover unit → select unit → baseline unit
      → discover scenario → select scenario → baseline scenario
      → step start → edit → run unit → (fix → run unit)*
-                         → run scenario → (fix → run unit → run scenario)*
+                         → run scenario → (fix → re-verify what it touched)*
      → step done → (next increment …) → done
 ```
+
+Inside an increment, an edit re-opens only the gates it can affect, and `next` routes accordingly:
+
+| Edited | Then |
+|---|---|
+| production code, or a `step start --file` file | run unit, then scenarios: both gates re-opened |
+| a selected unit test | run unit; the scenario result still stands, so the increment can close |
+| a feature file, a step definition, the runner | run scenarios only; the unit result still stands |
+
+This is why a scenario fix usually sends you back to the unit tests: repairing a scenario normally
+means changing behaviour, and that can break a unit test in the same increment. When the repair is
+confined to the glue or a feature file, it does not, and the loop stays on the scenario side.
 
 | Phase | What it means |
 |---|---|
@@ -27,7 +39,7 @@ init → discover unit → select unit → baseline unit
 | `STEP_OPEN` | An increment is open and waiting for the code change. |
 | `VERIFY_UNIT` / `FIX_UNIT` | Running, or fixing, the unit gate. |
 | `VERIFY_SCENARIO` / `FIX_SCENARIO` | The same for the scenario gate — only reachable once unit is green. |
-| `STEP_GREEN` | Both gates verified after the last edit; the increment can close. |
+| `STEP_GREEN` | Every applicable gate verified after the last edit; the increment can close. A further edit re-opens whichever gates it affects, so this is not a resting place. |
 | `BLOCKED` | Someone escalated. Only `unblock` leaves this state. |
 
 ---
